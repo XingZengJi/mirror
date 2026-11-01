@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>镜子</title>
+<link href="https://fonts.googleapis.com/css2?family=Zhi+Mang+Xing&family=Noto+Serif+SC:wght@300;600&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:#000;color:#cfcfcf;overflow:hidden;font-family:'Noto Serif SC',serif}
+canvas#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+#intro{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:radial-gradient(ellipse at center,#0d0d0f 0%,#000 70%);z-index:5;transition:opacity 2.5s;padding:0 24px}
+#intro h1{font-family:'Zhi Mang Xing',serif;font-weight:400;font-size:clamp(72px,15vw,150px);margin:0 0 .25em;color:#bdbdbd;letter-spacing:.2em;text-indent:.2em;text-shadow:0 0 30px rgba(255,255,255,.12);animation:breathe 6s ease-in-out infinite}
+#intro p{line-height:2.2;font-weight:300;color:#7d7d7d;margin:0 0 2.4em;font-size:15px;letter-spacing:.08em}
+#intro small{color:#444;font-size:12px;margin-top:2.6em;display:block;letter-spacing:.05em;line-height:1.8}
+button{background:transparent;border:1px solid #3a3a3a;color:#aaa;padding:.85em 2.8em;font-family:inherit;font-size:16px;letter-spacing:.6em;text-indent:.6em;cursor:pointer;transition:all .8s}
+button:hover{border-color:#7a1414;color:#eee;box-shadow:0 0 34px rgba(130,16,16,.35)}
+button:disabled{opacity:.4;cursor:wait}
+#sub{position:fixed;left:0;right:0;bottom:6vh;text-align:center;font-size:clamp(15px,2.2vw,20px);letter-spacing:.3em;color:#9a9a9a;opacity:0;transition:opacity 1.6s;z-index:3;pointer-events:none;text-shadow:0 0 10px #000;padding:0 20px}
+#end{position:fixed;inset:0;background:#000;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:6;text-align:center}
+#end h2{font-family:'Zhi Mang Xing',serif;font-weight:400;font-size:clamp(80px,17vw,200px);margin:0;color:#dcdcdc;opacity:0;letter-spacing:.1em}
+#end p{color:#555;letter-spacing:.35em;opacity:0;transition:opacity 3s;margin:2.2em 0 3em}
+#end button{opacity:0;transition:opacity 2.5s}
+#mute{position:fixed;right:14px;top:12px;z-index:7;padding:.35em .9em;font-size:12px;letter-spacing:.2em;text-indent:.2em;border-color:#222;color:#555;display:none}
+@keyframes breathe{0%,100%{opacity:.7}50%{opacity:1}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="intro">
+  <h1>镜子</h1>
+  <p>请在一个安静、昏暗的房间里打开。<br>戴上耳机。<br>接下来的两分钟，请一直看着镜子。</p>
+  <button id="go">照镜子</button>
+  <small>会请求摄像头权限 · 画面只在你的设备上处理，不会上传<br>不给权限也可以，镜子里会是别的东西</small>
+</div>
+<div id="sub"></div>
+<button id="mute">静音</button>
+<div id="end">
+  <h2 id="endT">别回头。</h2>
+  <p id="endP">……它已经在你身后了。</p>
+  <button id="again">再照一次</button>
+</div>
+<script>
+const C=document.getElementById('c'),X=C.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(2,window.devicePixelRatio||1);W=innerWidth;H=innerHeight;C.width=W*DPR;C.height=H*DPR;X.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);resize();
+
+/* ---------- buffers ---------- */
+const SW=480,SH=360,RING=64;
+const FR=[];for(let i=0;i<RING;i++){const c=document.createElement('canvas');c.width=SW;c.height=SH;FR.push({c,t:-1});}
+let ri=0;
+const tmp=document.createElement('canvas');tmp.width=SW;tmp.height=SH;const tx=tmp.getContext('2d');
+const out=document.createElement('canvas');out.width=SW;out.height=SH;const ox=out.getContext('2d');
+
+const grains=[];
+for(let k=0;k<4;k++){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');const id=g.createImageData(128,128);for(let i=0;i<id.data.length;i+=4){const v=Math.random()*255;id.data[i]=id.data[i+1]=id.data[i+2]=v;id.data[i+3]=255;}g.putImageData(id,0,0);grains.push(X.createPattern(c,'repeat'));}
+
+const scr=document.createElement('canvas');scr.width=720;scr.height=1000;
+(()=>{const g=scr.getContext('2d');for(let i=0;i<70;i++){g.strokeStyle=`rgba(255,255,255,${Math.random()*0.07})`;g.lineWidth=Math.random()*1.3;g.beginPath();const x=Math.random()*720,y=Math.random()*1000,a=Math.random()*Math.PI,l=20+Math.random()*220;g.moveTo(x,y);g.quadraticCurveTo(x+Math.cos(a)*l*0.5+Math.random()*20,y+Math.sin(a)*l*0.5,x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();}
+for(let i=0;i<14;i++){const x=Math.random()*720,y=Math.random()*1000,r=30+Math.random()*120;const gr=g.createRadialGradient(x,y,0,x,y,r);gr.addColorStop(0,'rgba(60,45,30,0.22)');gr.addColorStop(1,'rgba(60,45,30,0)');g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);}})();
+
+/* ---------- state ---------- */
+let mode=null,video=null,running=false,ended=false;
+let elapsed=0,last=0,frameN=0;
+let delay=0,delayFrom=0,delayTo=0,delayT0=0,delayDur=0;
+function rampDelay(to,dur){delayFrom=delay;delayTo=to;delayT0=elapsed;delayDur=dur;}
+let tilt=0,tiltTarget=0,idleOn=false,tilted=false,warnedMove=false;
+let frozen=false,frozenFrame=null,shown=null,turn=0,turning=false,turnT0=0;
+let lastMove=performance.now(),mxn=0.5,figX=0.5;
+let ghostUntil=0,ghostLen=1,flickerUntil=0;
+let fogs=[],hiddenCount=0;
+let hbRate=0,nextBeat=0;
+
+function moved(e){lastMove=performance.now();const p=e.touches?e.touches[0]:e;if(p&&p.clientX!=null)mxn=p.clientX/W;}
+['mousemove','touchstart','touchmove','keydown','pointerdown'].forEach(n=>addEventListener(n,moved,{passive:true}));
+
+/* ---------- audio ---------- */
+let AC=null,master,droneF,droneG,noiseG,NB;
+function initAudio(){try{
+  AC=new (window.AudioContext||window.webkitAudioContext)();
+  master=AC.createGain();master.gain.setValueAtTime(0.0001,AC.currentTime);master.gain.exponentialRampToValueAtTime(0.75,AC.currentTime+5);master.connect(AC.destination);
+  droneF=AC.createBiquadFilter();droneF.type='lowpass';droneF.frequency.value=150;droneG=AC.createGain();droneG.gain.value=0.11;droneF.connect(droneG);droneG.connect(master);
+  [43.65,44.05,65.41,92.5].forEach((f,i)=>{const o=AC.createOscillator();o.type=i<3?'sawtooth':'triangle';o.frequency.value=f;const g=AC.createGain();g.gain.value=i<3?1:0.4;o.connect(g);g.connect(droneF);o.start();});
+  NB=AC.createBuffer(1,AC.sampleRate*2,AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  const n=AC.createBufferSource();n.buffer=NB;n.loop=true;const bf=AC.createBiquadFilter();bf.type='bandpass';bf.frequency.value=500;bf.Q.value=0.8;noiseG=AC.createGain();noiseG.gain.value=0.014;n.connect(bf);bf.connect(noiseG);noiseG.connect(master);n.start();
+  const l=AC.createOscillator();l.frequency.value=0.06;const lg=AC.createGain();lg.gain.value=320;l.connect(lg);lg.connect(bf.frequency);l.start();
+}catch(e){AC=null;}}
+function tension(v){if(!AC)return;const t=AC.currentTime;droneF.frequency.linearRampToValueAtTime(150+v*520,t+3);droneG.gain.linearRampToValueAtTime(0.11+v*0.13,t+3);noiseG.gain.linearRampToValueAtTime(0.014+v*0.055,t+3);}
+function thump(t,v){const o=AC.createOscillator(),g=AC.createGain();o.type='sine';o.frequency.setValueAtTime(72,t);o.frequency.exponentialRampToValueAtTime(36,t+0.2);g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(v,t+0.015);g.gain.exponentialRampToValueAtTime(0.0001,t+0.28);o.connect(g);g.connect(master);o.start(t);o.stop(t+0.32);}
+function whoosh(){if(!AC)return;const t=AC.currentTime;const s=AC.createBufferSource();s.buffer=NB;const f=AC.createBiquadFilter();f.type='bandpass';f.Q.value=4;f.frequency.setValueAtTime(180,t);f.frequency.exponentialRampToValueAtTime(1600,t+1.3);const g=AC.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.3,t+0.7);g.gain.exponentialRampToValueAtTime(0.0001,t+1.7);s.connect(f);f.connect(g);g.connect(master);s.start(t);s.stop(t+1.8);}
+function sting(){if(!AC)return;const t=AC.currentTime;
+  [droneG,noiseG].forEach(p=>{p.gain.cancelScheduledValues(t);p.gain.setValueAtTime(0,t);});hbRate=0;
+  const g=AC.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.55,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+3.2);g.connect(master);
+  [233.1,246.9,277.2,349.2,493.9,523.3,739.9].forEach((f,i)=>{const o=AC.createOscillator();o.type=i%2?'sawtooth':'square';o.frequency.setValueAtTime(f,t);o.frequency.linearRampToValueAtTime(f*0.93,t+3.2);const og=AC.createGain();og.gain.value=0.1;o.connect(og);og.connect(g);o.start(t);o.stop(t+3.3);});
+  const s=AC.createBufferSource();s.buffer=NB;const ng=AC.createGain();ng.gain.setValueAtTime(0.7,t);ng.gain.exponentialRampToValueAtTime(0.0001,t+1.6);s.connect(ng);ng.connect(master);s.start(t);s.stop(t+1.7);}
+
+/* ---------- text ---------- */
+const SUB=document.getElementById('sub');let subTimer;
+function sub(t,d=3.5){SUB.textContent=t;SUB.style.opacity=1;clearTimeout(subTimer);subTimer=setTimeout(()=>SUB.style.opacity=0,d*1000);}
+function fog(text,dur=6.5){fogs.forEach(f=>{f.dur=Math.min(f.dur,elapsed-f.t0+1.2);});fogs.push({text,t0:elapsed,dur});}
+function timeText(){const d=new Date();const h=d.getHours(),m=d.getMinutes();let p;
+  if(h<5)p='凌晨';else if(h<9)p='早上';else if(h<12)p='上午';else if(h<13)p='中午';else if(h<18)p='下午';else p='晚上';
+  let hh=h>12?h-12:h;if(hh===0)hh=12;return `现在是\n${p}${hh}点${m===0?'整':m+'分'}。`;}
+
+/* ---------- sources ---------- */
+function drawSource(g){
+  if(mode==='cam'&&video&&video.readyState>=2){
+    const vw=video.videoWidth||640,vh=video.videoHeight||480,s=Math.max(SW/vw,SH/vh);
+    g.save();g.translate(SW,0);g.scale(-1,1);g.drawImage(video,(SW-vw*s)/2,(SH-vh*s)/2,vw*s,vh*s);g.restore();
+  }else if(mode==='cam'){g.fillStyle='#000';g.fillRect(0,0,SW,SH);}
+  else drawSynthetic(g);
+}
+function drawSynthetic(g){
+  const t=elapsed;
+  const bg=g.createRadialGradient(SW*0.32,SH*0.25,10,SW*0.5,SH*0.5,SW*0.85);bg.addColorStop(0,'#707070');bg.addColorStop(1,'#151515');g.fillStyle=bg;g.fillRect(0,0,SW,SH);
+  const dx=SW*0.73,dw=SW*0.17;g.fillStyle='#2f2f2f';g.fillRect(dx-5,SH*0.07,dw+10,SH);g.fillStyle='#4e4e4e';g.fillRect(dx,SH*0.1,dw,SH);
+  const open=Math.max(0,Math.min(1,(t-50)/50));
+  if(open>0){g.fillStyle='#030303';g.fillRect(dx,SH*0.1,dw*open*0.55,SH);g.fillStyle='#3a3a3a';g.fillRect(dx+dw*open*0.55,SH*0.1,3,SH);}
+  figX+=(mxn-figX)*0.025;
+  const fx=SW*(0.5+(figX-0.5)*0.22),br=Math.sin(t*1.25)*2.2;
+  g.save();g.filter='blur(2px)';g.fillStyle='#090909';
+  g.beginPath();g.ellipse(fx,SH*0.4+br*0.4,SW*0.082,SH*0.145,0,0,Math.PI*2);g.fill();
+  g.beginPath();g.moveTo(fx-SW*0.035,SH*0.5);g.lineTo(fx+SW*0.035,SH*0.5);g.lineTo(fx+SW*0.045,SH*0.62);
+  g.bezierCurveTo(fx+SW*0.2,SH*0.64+br,fx+SW*0.26,SH*0.72,fx+SW*0.29,SH);g.lineTo(fx-SW*0.29,SH);
+  g.bezierCurveTo(fx-SW*0.26,SH*0.72,fx-SW*0.2,SH*0.64+br,fx-SW*0.045,SH*0.62);g.closePath();g.fill();g.restore();
+}
+
+/* ---------- ghost ---------- */
+function drawGhost(cx,cy,mw,mh,a){
+  X.save();X.globalAlpha=a;X.filter='blur(4px)';
+  const gx=cx+mw*0.25,gy=cy-mh*0.12,r=mw*0.052;
+  X.fillStyle='rgba(0,0,0,0.92)';X.beginPath();X.ellipse(gx,gy+r*3.3,r*1.7,r*2.3,0,0,Math.PI*2);X.fill();
+  X.fillStyle='#8d9193';X.beginPath();X.ellipse(gx,gy,r,r*1.6,0,0,Math.PI*2);X.fill();
+  X.fillStyle='#000';X.beginPath();
+  X.ellipse(gx-r*0.38,gy-r*0.12,r*0.2,r*0.3,0,0,Math.PI*2);X.moveTo(gx+r*0.58,gy-r*0.12);
+  X.ellipse(gx+r*0.38,gy-r*0.12,r*0.2,r*0.3,0,0,Math.PI*2);X.moveTo(gx+r*0.14,gy+r*0.7);
+  X.ellipse(gx,gy+r*0.75,r*0.12,r*0.45,0,0,Math.PI*2);X.fill();
+  X.restore();
+}
+
+/* ---------- fog writing ---------- */
+function drawFogs(cx,cy,mw,mh){
+  fogs=fogs.filter(f=>elapsed-f.t0<f.dur);
+  for(const f of fogs){
+    const lines=f.text.split('\n'),maxL=Math.max(...lines.map(l=>[...l].length));
+    const fs=Math.min(mw*0.13,mw*0.76/maxL),age=elapsed-f.t0,step=0.14,shownN=Math.floor(age/step);
+    const fade=Math.max(0,Math.min(1,(f.dur-age)/1.6));
+    X.save();X.font=`${fs}px "Zhi Mang Xing", "Noto Serif SC", serif`;X.textAlign='center';X.textBaseline='middle';
+    let idx=0;
+    lines.forEach((ln,li)=>{
+      const chars=[...ln],y=cy-mh*0.06+(li-(lines.length-1)/2)*fs*1.3;
+      const ws=chars.map(ch=>X.measureText(ch).width),tw=ws.reduce((a,b)=>a+b,0);let x=cx-tw/2;
+      chars.forEach((ch,ci)=>{
+        if(idx<shownN){
+          const ca=Math.min(1,(age-idx*step)/0.45)*fade,px=x+ws[ci]/2;
+          X.shadowColor='rgba(255,255,255,0.55)';X.shadowBlur=fs*0.3;
+          X.fillStyle=`rgba(226,232,238,${0.52*ca})`;X.fillText(ch,px+(Math.random()-0.5)*0.7,y+(Math.random()-0.5)*0.7);
+          if((idx*7+li)%3===0){const len=Math.max(0,Math.min(fs*1.3,(age-idx*step-0.5)*fs*0.22));X.shadowBlur=0;X.fillStyle=`rgba(226,232,238,${0.28*ca})`;X.fillRect(px+((idx*13)%5-2)*fs*0.05,y+fs*0.35,Math.max(1.2,fs*0.03),len);}
+        }
+        idx++;x+=ws[ci];
+      });
+    });
+    X.restore();
+  }
+}
+
+/* ---------- timeline ---------- */
+let TL=[],tli=0;
+function ghost(d){ghostUntil=elapsed+d;ghostLen=d;}
+function flicker(d){flickerUntil=elapsed+d;}
+function buildTL(){
+  const intro=mode==='cam'
+    ?[[2,()=>sub('看着镜子。',4)],[8,()=>sub('对。就这样。',3.5)],[13.5,()=>sub('别眨眼。',3)]]
+    :[[2,()=>sub('你没有让我看见你。',4)],[7.5,()=>sub('没关系。',2.8)],[11,()=>sub('我看得见你。',4)]];
+  TL=intro.concat([
+    [22,()=>{rampDelay(0.35,15);tension(0.2);}],
+    [34,()=>fog(timeText(),6.5)],
+    [42,()=>fog('你确定\n家里只有你一个人吗？',7.5)],
+    [52,()=>{idleOn=true;tension(0.35);}],
+    [58,()=>{hbRate=52;nextBeat=AC?AC.currentTime+0.1:0;}],
+    [66,()=>{flicker(1.3);whoosh();}],
+    [66.5,()=>ghost(0.22)],
+    [72,()=>{sub('你身后那扇门……刚才是关着的吗？',4.5);tension(0.55);}],
+    [80,()=>{flicker(0.7);ghost(0.9);whoosh();}],
+    [86,()=>{hbRate=72;rampDelay(0.7,8);}],
+    [94,()=>{frozen=true;const c=document.createElement('canvas');c.width=SW;c.height=SH;c.getContext('2d').drawImage(shown.c,0,0);frozenFrame={c,t:0};hbRate=0;tension(0.75);sub('你动了。',2.8);}],
+    [97.5,()=>sub('我没有。',3.5)],
+    [101,()=>{turning=true;turnT0=elapsed;hbRate=100;nextBeat=AC?AC.currentTime:0;tension(1);}],
+    [107,endIt]
+  ]);
+}
+function runTimeline(){while(tli<TL.length&&elapsed>=TL[tli][0]){TL[tli][1]();tli++;}}
+
+function endIt(){
+  ended=true;running=false;sting();
+  const E=document.getElementById('end');E.style.display='flex';
+  document.getElementById('endT').style.opacity=1;SUB.style.opacity=0;
+  setTimeout(()=>{document.getElementById('endP').style.opacity=1;if(AC){thump(AC.currentTime,0.25);}},4500);
+  setTimeout(()=>{document.getElementById('again').style.opacity=1;},9000);
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!running||ended)return;
+  hiddenCount++;
+  if(hiddenCount===1){fog('你刚才\n去哪了？',6);}
+  else if(hiddenCount===2){fog('我一直\n在这里等你。',6);}
+  else fog('别再走了。',5);
+});
+
+/* ---------- render loop ---------- */
+function loop(){
+  requestAnimationFrame(loop);
+  const now=performance.now(),dt=Math.min(0.1,(now-(last||now))/1000);last=now;
+  if(!running)return;
+  elapsed+=dt;frameN++;
+  runTimeline();
+  if(delayDur){const k=Math.min(1,(elapsed-delayT0)/delayDur);delay=delayFrom+(delayTo-delayFrom)*(k*k*(3-2*k));}
+  const idle=now-lastMove>8000;
+  if(turning)turn=Math.min(1,(elapsed-turnT0)/6);
+  else if(idleOn&&!frozen){tiltTarget=idle?0.21:0;if(idle&&tilt>0.12)tilted=true;if(!idle&&tilted&&!warnedMove){warnedMove=true;fog('别动。',4);}}
+  else tiltTarget=0;
+  tilt+=(tiltTarget-tilt)*Math.min(1,dt*(tiltTarget>tilt?0.22:0.9));
+
+  if(AC&&hbRate>0&&AC.currentTime>=nextBeat){thump(nextBeat,0.55);thump(nextBeat+0.27,0.35);nextBeat+=60/hbRate;if(nextBeat<AC.currentTime)nextBeat=AC.currentTime+0.05;}
+
+  let fr;
+  if(frozen)fr=frozenFrame;
+  else{
+    const f=FR[ri];ri=(ri+1)%RING;drawSource(f.c.getContext('2d'));f.t=now;
+    const target=now-delay*1000;let best=null;
+    for(const q of FR){if(q.t<0)continue;if(q.t<=target&&(!best||q.t>best.t))best=q;}
+    fr=best||f;
+  }
+  shown=fr;
+
+  ox.clearRect(0,0,SW,SH);ox.drawImage(fr.c,0,0);
+  const ang=tilt+turn*0.55,sx=-turn*72,sc=1-turn*0.32,piv=SH*0.6;
+  if(Math.abs(ang)>0.004||turn>0){
+    if(turn>0){const hx=SW/2,hy=SH*0.4;const dg=ox.createRadialGradient(hx,hy,SH*0.08,hx,hy,SH*0.32);dg.addColorStop(0,`rgba(0,0,0,${Math.min(0.92,turn*1.6)})`);dg.addColorStop(1,'rgba(0,0,0,0)');ox.fillStyle=dg;ox.fillRect(0,0,SW,SH);}
+    tx.clearRect(0,0,SW,SH);tx.save();tx.translate(SW/2+sx,piv);tx.rotate(ang);tx.scale(sc,1);tx.translate(-SW/2,-piv);tx.drawImage(fr.c,0,0);tx.restore();
+    tx.save();tx.globalCompositeOperation='destination-in';const hx=SW/2+sx,hy=SH*0.39;
+    const gr=tx.createRadialGradient(hx,hy,SH*0.15,hx,hy,SH*0.3);gr.addColorStop(0,'#000');gr.addColorStop(1,'rgba(0,0,0,0)');tx.fillStyle=gr;tx.fillRect(0,0,SW,SH);tx.restore();
+    ox.drawImage(tmp,0,0);
+  }
+
+  // scene
+  X.fillStyle='#000';X.fillRect(0,0,W,H);
+  const mh=Math.min(H*0.84,W*0.88/0.72),mw=mh*0.72,cx=W/2,cy=H*0.47;
+  const amb=X.createRadialGradient(cx,cy,mw*0.3,cx,cy,Math.max(W,H)*0.7);amb.addColorStop(0,'rgba(30,26,22,0.5)');amb.addColorStop(1,'rgba(0,0,0,0)');X.fillStyle=amb;X.fillRect(0,0,W,H);
+
+  X.save();X.beginPath();X.ellipse(cx,cy,mw/2,mh/2,0,0,Math.PI*2);X.clip();
+  let br=0.8-Math.min(0.18,elapsed/600);
+  if(elapsed<flickerUntil)br*=Math.random()<0.45?0.15:0.95;
+  X.filter=`grayscale(1) contrast(1.22) brightness(${br.toFixed(3)})`;
+  const s=Math.max(mw/SW,mh/SH),dw=SW*s,dh=SH*s;
+  X.drawImage(out,cx-dw/2,cy-dh/2,dw,dh);X.filter='none';
+  X.fillStyle='rgba(18,28,36,0.22)';X.fillRect(cx-mw/2,cy-mh/2,mw,mh);
+  if(elapsed<ghostUntil){const a=(Math.random()<0.25?0.25:0.6)*(ghostLen>0.5?1:0.8);drawGhost(cx,cy,mw,mh,a);}
+  X.fillStyle='rgba(205,212,220,0.035)';X.fillRect(cx-mw/2,cy-mh/2,mw,mh);
+  drawFogs(cx,cy,mw,mh);
+  X.globalAlpha=0.9;X.drawImage(scr,cx-mw/2,cy-mh/2,mw,mh);
+  X.globalAlpha=0.065;X.fillStyle=grains[frameN%4];X.fillRect(cx-mw/2,cy-mh/2,mw,mh);X.globalAlpha=1;
+  const vg=X.createRadialGradient(cx,cy-mh*0.05,mw*0.22,cx,cy,mh*0.56);vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,0.92)');X.fillStyle=vg;X.fillRect(cx-mw/2,cy-mh/2,mw,mh);
+  X.restore();
+
+  // frame
+  const lw=mw*0.04;
+  const fg=X.createLinearGradient(cx-mw/2,cy-mh/2,cx+mw/2,cy+mh/2);fg.addColorStop(0,'#3b3127');fg.addColorStop(0.45,'#120e0b');fg.addColorStop(0.7,'#2c241d');fg.addColorStop(1,'#0b0907');
+  X.lineWidth=lw;X.strokeStyle=fg;X.beginPath();X.ellipse(cx,cy,mw/2+lw/2,mh/2+lw/2,0,0,Math.PI*2);X.stroke();
+  X.lineWidth=1.5;X.strokeStyle='rgba(255,235,210,0.08)';X.beginPath();X.ellipse(cx,cy,mw/2+lw,mh/2+lw,0,0,Math.PI*2);X.stroke();
+  X.lineWidth=2;X.strokeStyle='#000';X.beginPath();X.ellipse(cx,cy,mw/2,mh/2,0,0,Math.PI*2);X.stroke();
+}
+requestAnimationFrame(loop);
+
+/* ---------- start ---------- */
+document.getElementById('go').onclick=async function(){
+  this.disabled=true;this.textContent='……';
+  initAudio();try{document.fonts&&document.fonts.load('60px "Zhi Mang Xing"');}catch(e){}
+  let ok=false;
+  try{
+    if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){
+      const st=await Promise.race([
+        navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}),
+        new Promise((_,r)=>setTimeout(()=>r('timeout'),20000))]);
+      video=document.createElement('video');video.playsInline=true;video.muted=true;video.setAttribute('playsinline','');video.srcObject=st;await video.play();ok=true;
+    }
+  }catch(e){ok=false;}
+  mode=ok?'cam':'ghost';buildTL();
+  const I=document.getElementById('intro');I.style.opacity=0;I.style.pointerEvents='none';setTimeout(()=>I.remove(),2600);
+  lastMove=performance.now();last=performance.now();running=true;MB.style.display='block';
+};
+document.getElementById('again').onclick=()=>location.reload();
+
+/* ---------- sound off when the page is closed or hidden ---------- */
+let userMuted=false,pageVisible=true;
+function syncAudio(){if(!AC||AC.state==='closed')return;if(userMuted||!pageVisible)AC.suspend().catch(()=>{});else AC.resume().catch(()=>{});}
+document.addEventListener('visibilitychange',()=>{pageVisible=!document.hidden;syncAudio();});
+addEventListener('pagehide',()=>{try{AC&&AC.close();}catch(e){}});
+addEventListener('beforeunload',()=>{try{AC&&AC.close();}catch(e){}});
+try{new IntersectionObserver(es=>{pageVisible=es[0].isIntersecting&&!document.hidden;syncAudio();}).observe(C);}catch(e){}
+const MB=document.getElementById('mute');
+MB.onclick=()=>{userMuted=!userMuted;MB.textContent=userMuted?'开声音':'静音';syncAudio();};
+</script>
+</body>
+</html>
